@@ -1,0 +1,154 @@
+---
+title: "Personal Activity Analysis with Machine Learning"
+author: "Jeffrey Yu"
+date: "3/12/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+```
+
+## Introduction
+
+This study looks at data collected from personal fitness devices and attempts to
+build a model that predict the type of activity a person is performing. The data
+consists of readings from personal fitness devices taken while six participants
+performed barbell lifts ("Unilateral Dumbbell Biceps Curl") both correctly and
+incorrectly. The quality of each barbell lift is graded on a scale from A to E
+(details on lift grading, as well as the data are available from the study
+website: http://groupware.les.inf.puc-rio.br/har). Here, machine learning is
+used to attempt to build a model that can accurately predict the quality of a
+participant's barbell lift, based on the readings of the activity picked up by
+the personal fitness devices.
+
+## Getting and cleaning data
+
+First, the data is downloaded from the repository. The training data will be
+used to train and build the machine learning model, and the model will be used
+to predict the outcomes in the test data. Empty values, NAs, and invalid data
+are removed from the data set.
+
+```{r}
+training <- read.csv(
+  "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+  na.strings=c("","NA", "#DIV/0!"))
+testing <- read.csv(
+  "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+  na.strings=c("","NA", "#DIV/0!"))
+training$classe <- as.factor(training$classe)
+```
+
+Here is a listing of the variables available in the data set.
+```{r}
+names(training)
+```
+
+Not all of the data will be useful inputs for the training model. "X", for
+example, is simply a linear number of each input. "problem_id" is not defined
+and simply used to identify the rows in the test set. "user_name" is simply the
+username of the participant and not an actual device reading. 
+"raw_timestamp_part_1" and "raw_timestamp_part_2" appear to simply be the
+timestamps of when the readings were taken, and as all participants engaged
+in the activity during the same period, the model should consider them
+irrelevant as its readings should be based on physical readings independent
+of time. "new_window" and "num_window" are removed for similar reasons, as
+it is simply an increasing index identifying the time window in which the
+readings were taken.
+
+In addition, it is possible to use a function to identify which variables have
+zero or near-zero variability, which indicates they are not useful predictors.
+Not suprisingly, many the variables with near-zero variability tend are
+aggregate variables, such as var, std, and avg, which are likely already
+predicted by existing variables and likely to simply confound the model. Others
+are variables that contain a lot of missing data or bad data such as "#DIV/0!".
+
+Lastly, there are a number of variables for which all values are NA in the test
+data set. There are also columns in the training set that contain NA values.
+Therefore, any model to be used to predict the outcome of the test set can not
+take these variables as inputs. These are also excluded from the model.
+```{r}
+inputs <- names(training)
+exclude <- c(
+  "X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
+  "cvtd_timestamp", "new_window", "num_window")
+nearZeroVar(training, saveMetrics = TRUE)
+exclude <- c(exclude, nearZeroVar(training, names=TRUE))
+testsetAllNAs <- c(
+  "max_roll_belt", "max_picth_belt", "min_roll_belt", "min_pitch_belt",
+  "amplitude_roll_belt", "amplitude_pitch_belt", "var_total_accel_belt",
+  "avg_roll_belt", "stddev_roll_belt", "var_roll_belt", "avg_pitch_belt",
+  "stddev_pitch_belt", "var_pitch_belt", "avg_yaw_belt", "stddev_yaw_belt",
+  "var_yaw_belt", "var_accel_arm", "max_picth_arm", "max_yaw_arm",
+  "min_yaw_arm", "amplitude_yaw_arm", "max_roll_dumbbell", "max_picth_dumbbell",
+  "min_roll_dumbbell", "min_pitch_dumbbell", "amplitude_roll_dumbbell", 
+  "amplitude_pitch_dumbbell", "var_accel_dumbbell", "avg_roll_dumbbell", 
+  "stddev_roll_dumbbell", "var_roll_dumbbell", "avg_pitch_dumbbell", 
+  "stddev_pitch_dumbbell", "var_pitch_dumbbell", "avg_yaw_dumbbell",
+  "stddev_yaw_dumbbell", "var_yaw_dumbbell", "max_picth_forearm",
+  "min_pitch_forearm", "amplitude_pitch_forearm", "var_accel_forearm")
+exclude <- c(exclude, testsetAllNAs)
+inputs <- inputs[!inputs %in% exclude]
+
+training <- training[, names(training) %in% inputs]
+training <- training[, !apply(training,2,function(x) any(is.na(x)))]
+```
+
+The training set is now trimmed down to exclude the excluded columns, as well
+as to retain only complete cases (to exclude NAs), so that the model will not
+be built on invalid data.
+
+## Building models
+
+The test data provided does not include the actual grade associated with each
+activity, so in order to test and validate the model, the training data is
+partitioned into two sets, one used for the actual training, and the other used
+to determine the validity of the model.
+
+```{r}
+library(caret)
+inTrain <- createDataPartition(y=training$classe, p=0.75, list=FALSE)
+trainingSet <- training[inTrain,]
+validationSet <- training[-inTrain,]
+```
+
+Now a Caret library is used to create a data model from the training set using
+the Random Forest training method. A few parameters are set to reduce the number
+of iterations and retries to hopefully speed up the performance. The model is
+applied to the validation set to create a prediction, and an analysis and
+confusion matrix is applied to compare the prediction with the actual values in
+the validation set.
+
+```{r}
+rfModel <- train(classe ~ ., method="rf", data=trainingSet, 
+                 trainControl=trainControl(method="cv", number=3, repeats=2),
+                 tuneLength=10)
+
+prediction <- predict(rfModel, validationSet)
+confusionMatrix(validationSet$classe, prediction)
+```
+
+The prediction against the validation set compared with the actual grades shows
+an accuracy of 0.9957, resulting in an __out of sample error__ of 0.0043.
+
+## Prediction against test set
+
+Now that the testing against the validation set grants some confidence in the
+model, it can now be used to predict the grades of the recorded activities in
+the test set.
+
+```{r}
+predict(rfModel, testing)
+```
+
+## References
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable
+Computing: Accelerometers' Data Classification of Body Postures and Movements.
+Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in
+Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. ,
+pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012.
+ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#sbia_paper_section#ixzz4bBgA8byI
